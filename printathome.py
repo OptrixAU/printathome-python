@@ -198,7 +198,22 @@ for folder in dirs:
                 pass            
     
         srcsize = (srcsize[0] - (oll + olr),srcsize[1] - (olt + olb))
-        
+    
+    #Check for special card instructions...
+    touched = []
+    for cd in images:
+        nm = pathlib.Path(cd).stem.lower()
+        if nm not in touched:
+            try:
+                touched.append(nm)
+                repeats = int(config['COUNTS'][nm])-1
+                #print("Repeating " + nm + " " + str(repeats) + " times!")
+                if repeats >= 1:
+                    for n in range(0,repeats):
+                        images.append(cd)
+            except:
+                pass        
+    
     #Figure out the ideal fit...
     
     #Vertical fit
@@ -310,8 +325,7 @@ for folder in dirs:
                     #If generating card backs, add the back image here too.
                     if mask is not None and usemask == True:                    
                         imm = Image.composite(backimage,whiteimage,maskimage)
-                        backimg.paste(imm,target,maskimage)
-                        #img.paste(imm,target,maskimage)
+                        backimg.paste(imm,target,maskimage)                        
                         imm = None                
                     else:
                         backimg.paste(backimage,target)

@@ -29,8 +29,13 @@ This should include all of your images for a single deck of cards.
 There are three special files that can be located inside the directory....
 
 **Deck.ini** includes instructions for how much overlap may occur in your cards. 
+
 **Mask.svg** is an SVG fragment (ie. it does not contain the actual <svg> element, nor the XML header) containing a SVG masking shape for a cutting device.
-**Mask.<image extension>** A greyscale or black-and-white mask image that are optionally applied to cards when they are printed - simulates what a cutter would normally do.
+
+**Mask.[image extension]** A greyscale or black-and-white mask image that are optionally applied to cards when they are printed - simulates what a cutter would normally do.
+
+**Back.[image extension]** Used for the back of the card.
+
 
 ## Examples
 
@@ -47,3 +52,22 @@ python printathome.py -cutlines --paper 4x6
 ```
 
 Place your cards onto 4x6 paper for printing at a photo lab. The cards borders will touch, reducing the amount of manual cutting. Thin cut guide-lines will appear on your image.
+
+## INI Settings
+
+The deck INI file can currently contain the following sections...
+
+```
+[OVERLAP]
+left = 37
+right = 37
+top = 37
+bottom = 37
+
+[COUNTS]
+CardD=4
+```
+
+**Overlap** describes how much whitespace is present in the image / mask. 
+
+**Counts** lets you tell the converter to print multiple copies of a card. 
