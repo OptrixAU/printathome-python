@@ -2,6 +2,8 @@
 
 This tool allows you to prepare print-at-home card games for a personal use on your choice of paper size and with formatting that suits your method of production.
 
+![alt text](https://github.com/OptrixAU/printathome-python/blob/master/Sample.jpg?raw=true)
+
 ## Status
 
 This is in very early development, but may be functional for some limited uses
