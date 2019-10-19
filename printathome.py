@@ -308,7 +308,13 @@ for folder in dirs:
 
                 if genbacks == True:
                     #If generating card backs, add the back image here too.
-                    backimg.paste(backimage,target)
+                    if mask is not None and usemask == True:                    
+                        imm = Image.composite(backimage,whiteimage,maskimage)
+                        backimg.paste(imm,target,maskimage)
+                        #img.paste(imm,target,maskimage)
+                        imm = None                
+                    else:
+                        backimg.paste(backimage,target)
 
                 #Add to SVG cut template
                 if svgcontent != '':
