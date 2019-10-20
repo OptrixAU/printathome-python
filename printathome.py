@@ -140,6 +140,7 @@ dirs = os.listdir(cpath)
 
 for folder in dirs:
     images = []
+    cardbacks = {}
     
     mask = None
     back = None
@@ -160,6 +161,11 @@ for folder in dirs:
 
             if file.lower().find("back" + extension) >= 0:
                 back=file
+                continue
+
+            ps = file.find('[back]')
+            if ps > 0:                
+                cardbacks[file.replace('[back]','')] = file
                 continue
             
             images.append(file)        
@@ -323,12 +329,18 @@ for folder in dirs:
 
                 if genbacks == True:
                     #If generating card backs, add the back image here too.
+                    thisbackimage = backimage
+                    if images[imageindex] in cardbacks:
+                        print("Using Special Back Image " + cardbacks[images[imageindex]])
+                        thisbackimage = Image.open(cardbacks[images[imageindex]])
                     if mask is not None and usemask == True:                    
-                        imm = Image.composite(backimage,whiteimage,maskimage)
+                        imm = Image.composite(thisbackimage,whiteimage,maskimage)
                         backimg.paste(imm,target,maskimage)                        
                         imm = None                
                     else:
-                        backimg.paste(backimage,target)
+                        backimg.paste(thisbackimage,target)
+
+                    thisbackimage = None
 
                 #Add to SVG cut template
                 if svgcontent != '':

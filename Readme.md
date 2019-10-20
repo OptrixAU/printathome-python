@@ -71,3 +71,12 @@ CardD=4
 **Overlap** describes how much whitespace is present in the image / mask. 
 
 **Counts** lets you tell the converter to print multiple copies of a card. 
+
+## Special File Names
+
+The following file names & file name components have special meanings...
+
+__Back.[extension]__ - The back of the card deck.
+
+__*CardName*[back].[extension]__ - The back of one specific card.
+
