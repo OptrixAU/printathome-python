@@ -5,6 +5,7 @@ import glob
 import pathlib
 import configparser
 import argparse
+import xmltodict
 
 def GenerateCutLines(img,wx,wy,ox,oy,nx,ny,sx,sy):
     draw = ImageDraw.Draw(img)
@@ -15,6 +16,82 @@ def GenerateCutLines(img,wx,wy,ox,oy,nx,ny,sx,sy):
     for y in range(0,ny+1):
         ln = [(0,oy + (wy * y)),(sx,oy + (wy * y))]
         draw.line(ln,fill=(128,128,127),width=2)
+
+def Extract(origin, destination,extractor):
+    if not os.path.exists(destination):
+        os.mkdir(destination)
+
+    backing = []
+
+    with open(extractor) as fd:
+        doc = xmltodict.parse(fd.read())
+        capture = []
+
+        for rct in doc['svg']['rect']:            
+            capture.append((int(float(rct['@x'])),int(float(rct['@y'])),int(float(rct['@width'])),int(float(rct['@height']))))
+            try:
+                if rct['@fill'] == '#000000':
+                    backing.append(len(capture)-1)
+            except:
+                backing.append(len(capture)-1)
+
+    print("Found " + str(len(capture)) + " capture points in extractor SVG")
+            
+    #Create destination image...
+    backsequence = []
+    for n in backsequence:
+        backsequence.append(n)    
+
+    #For every source image...
+    imageno = 0
+    backno = 0
+    allfiles = glob.glob(origin + os.sep + "*.*")
+    for file in allfiles:    
+        extension = ''.join(pathlib.Path(file).suffixes)
+        extension = extension.lower()
+        if extension == ".jpg" or extension == ".jpeg" or extension == ".png":
+            print("Extracting From " + file)
+            src = Image.open(file)
+
+            sequence = capture
+
+            mod = ""
+            idno = imageno
+            ps = file.find('[back]')
+            if ps > 0:                
+                mod = "[back]"
+                sequence = backsequence
+
+            #print(str(backsequence))
+
+            capno = 0
+            for cap in sequence:
+                
+                if mod == "[back]":
+                    idno = backno
+                else:
+                    idno = imageno
+
+                if len(backing) > 0:
+                    idno = imageno
+                    mod=""
+                    if capno in backing:
+                        mod="[back]"
+                        idno = backno                
+                    
+                croppiece = (cap[0],cap[1],cap[0] + cap[2],cap[1] + cap[3])
+                mini = src.crop(croppiece)
+                mini.load()
+                mini.save(destination + os.sep + 'card' + str(idno).zfill(4) + mod + ".png")
+                mini = None
+
+                if mod == "[back]":
+                    backno = backno + 1
+                else:
+                    imageno = imageno + 1
+
+                capno = capno + 1
+            src = None
 
 #Prepare variables
 cpath = os.getcwd()
@@ -39,6 +116,7 @@ gencut = True
 
 #Draw cut lines
 cutlines = False
+borders = False
 
 #Generate backs
 genbacks = False
@@ -49,21 +127,31 @@ overlap = False
 #Distribute images
 distribute = False
 
+#Paper Options
+bleed = 0
+
+
 #Import arguments
 parser = argparse.ArgumentParser(description='Prepares Print-At-Home Card Games for Printing')
+parser.add_argument('name', default="*", help='The name of the card to process')
 parser.add_argument('--backs',const=True, default=False, action='store_const', help='Produce card backs as well as fronts')
 parser.add_argument('--nooverlap',const=False, default=True, action='store_const', help='Do not overlap cards, leaving unfilled space')
 parser.add_argument('--cutlines',const=True, default=False, action='store_const', help='Draw cut lines onto the finished images')
 parser.add_argument('--topedge',const=True, default=False, action='store_const', help='Place images at the top of the paper instead of the center')
 parser.add_argument('--leftedge',const=True, default=False, action='store_const', help='Place images at the left of the paper instead of the center')
 parser.add_argument('--nomask',const=False, default=True, action='store_const', help='Do not mask out unused parts of the image')
-parser.add_argument('--distribute',const=False, default=True, action='store_const', help='Cards should not share any borders')
+parser.add_argument('--distribute',const=True, default=False, action='store_const', help='Cards should not share any borders')
+parser.add_argument('--borders',const=True, default=False, action='store_const', help='Draw square card borders')
+parser.add_argument('--skipextract',const=True, default=False, action='store_const', help='Skip the extraction step')
 parser.add_argument('--paper',default='4x6', nargs='?')
 parser.add_argument('--paperwidth',default='', nargs='?')
 parser.add_argument('--paperheight',default='', nargs='?')
 parser.add_argument('--units',default='in', nargs='?')
 parser.add_argument('--dpi',default='300', nargs='?')
+parser.add_argument('--bleed',default='0', nargs='?')
 parser.add_argument('--landscape',const=True, default=False, action='store_const', help='Flip the named paper sizes 90 degrees')
+parser.add_argument('--flipbacksx',const=True, default=False, action='store_const', help='Produce cards with backs on their longest axis')
+parser.add_argument('--flipbacksy',const=True, default=False, action='store_const', help='Produce cards with backs on their shortest axis')
 args = parser.parse_args()
 
 genbacks = args.backs
@@ -71,6 +159,7 @@ cutlines = args.cutlines
 overlap = args.nooverlap
 #fittoedge = args.onedge
 usemask = args.nomask
+borders = args.borders
 
 #Translate paper names
 if args.paper == '4x6' or args.paper == '6x4':
@@ -131,6 +220,8 @@ if args.units != '':
 #Output quality
 dpi = int(args.dpi)
 
+bleed = int(args.bleed)
+
 #Final resolution
 pw = int(dpi * paperwidthin)
 ph = int(dpi * paperheightin)
@@ -139,6 +230,11 @@ ph = int(dpi * paperheightin)
 dirs = os.listdir(cpath)
 
 for folder in dirs:
+
+    if args.name != "*":
+        if folder != args.name:
+            continue
+        
     images = []
     cardbacks = {}
     
@@ -148,6 +244,19 @@ for folder in dirs:
     #Only process directories...
     if not os.path.isdir(cpath + os.sep + folder):
         pass
+
+    extracting = False
+    outputfolder = folder
+
+    #Look for a card extractor...
+    extfile = cpath + os.sep + folder + os.sep + "extractor.svg"
+    if os.path.exists(extfile):
+        print("Using Extraction Template To Find Individual Cards")
+        oldfolder = folder
+        folder = folder + os.sep + "extracted"
+        if args.skipextract == False:
+            Extract(oldfolder,folder,extfile)
+            extracting = True
     
     #Grab a list of files in the active directory    
     allfiles = glob.glob(cpath + os.sep + folder + os.sep + "*.*")
@@ -189,6 +298,7 @@ for folder in dirs:
     oll = 0
 
     config = None
+    
     #Is there a config file for this deck?
     if os.path.exists(cpath + os.sep + folder + os.sep + "deck.ini"):        
         config = configparser.ConfigParser()
@@ -218,18 +328,30 @@ for folder in dirs:
                     for n in range(0,repeats):
                         images.append(cd)
             except:
-                pass        
-    
+                pass            
+        
     #Figure out the ideal fit...
+
+    ppw = pw
+    pph = ph
+
+    ppw -= bleed*2
+    pph -= bleed*2
+
+    if args.flipbacksx == True:        
+        srcsize = (int(srcsize[0] * 2),srcsize[1])
+        
+    if args.flipbacksy == True:        
+        srcsize = (srcsize[0],int(srcsize[1] * 2))
     
     #Vertical fit
-    vfitx = int(pw / srcsize[0])
-    vfity = int(ph / srcsize[1])
+    vfitx = int(ppw / srcsize[0])
+    vfity = int(pph / srcsize[1])
     vfit = vfitx * vfity
 
     #Horizontal fit
-    hfitx = int(pw / srcsize[1])
-    hfity = int(ph / srcsize[0])
+    hfitx = int(ppw / srcsize[1])
+    hfity = int(pph / srcsize[0])
     hfit = hfitx * hfity
 
     #Assume vertical
@@ -251,6 +373,9 @@ for folder in dirs:
 
     #Show final paper fit details...
     print(folder + " can fit " + str(fit) + " items on a " + str(pw) + "x" + str(ph) + " canvas.")
+    if fit == 0:
+        print("Unable to process - item does not fit on the selected paper size.")
+        continue
     
     #Calculate image offsets...
     printwidth = fitx * srcsize[0]
@@ -264,7 +389,10 @@ for folder in dirs:
     offsety = 0
     #Center on Y axis...
     if args.topedge == False:
-        offsety = (ph - printheight)/ 2    
+        offsety = (ph - printheight)/ 2
+
+    offsetx += bleed
+    offsety += bleed
 
     #Prepare masking images
     whiteimage = Image.new('RGBA',(im.size[0],im.size[1]),(255, 255, 255, 255))
@@ -279,9 +407,13 @@ for folder in dirs:
     imageno = 1
     imageindex = 0
     img = Image.new('RGBA',(pw,ph),(255, 255,255,255))
+    backimage = None
     if genbacks == True:
         backimg = Image.new('RGBA',(pw,ph),(255, 255,255,255))
-        backimage = Image.open(back)
+        try:
+            backimage = Image.open(back)
+        except:
+            pass
 
     print("Creating Card Images..." + str(len(images)) + " Items")
     if mask is not None and usemask == True:
@@ -318,6 +450,11 @@ for folder in dirs:
                                 
                 imx = Image.open(images[imageindex])
                 target = (int(offsetx + (x*srcsize[0])) + (gapx * x) - oll,int(offsety + (y*srcsize[1])) + (gapy * y) - olt)
+                targetb = None
+                if args.flipbacksx:
+                    targetb = (target[0] + int(srcsize[0]/2),target[1])
+                if args.flipbacksy:
+                    targetb = (target[0],target[1] + int(srcsize[1] / 2))
 
                 #If we are using the mask, mask the image here.
                 if mask is not None and usemask == True:                    
@@ -327,20 +464,53 @@ for folder in dirs:
                 else:
                     img.paste(imx,target)
 
+                bdr = [int(offsetx + (x*srcsize[0])) + (gapx * x) - oll,int(offsety + (y*srcsize[1])) + (gapy * y) - olt,srcsize[0],srcsize[1]]
+
+                if borders == True:
+                    #print("Drawing Border")                    
+                    draw = ImageDraw.Draw(img)
+                    draw.rectangle(bdr,outline=(128,128,127),width=2)
+
                 if genbacks == True:
                     #If generating card backs, add the back image here too.
                     thisbackimage = backimage
                     if images[imageindex] in cardbacks:
-                        print("Using Special Back Image " + cardbacks[images[imageindex]])
+                        #print("Using Special Back Image " + cardbacks[images[imageindex]])
                         thisbackimage = Image.open(cardbacks[images[imageindex]])
-                    if mask is not None and usemask == True:                    
-                        imm = Image.composite(thisbackimage,whiteimage,maskimage)
-                        backimg.paste(imm,target,maskimage)                        
-                        imm = None                
-                    else:
-                        backimg.paste(thisbackimage,target)
+
+                    if thisbackimage is None:
+                        thisbackimage = imx
+
+                    if thisbackimage is not None:
+                        
+                        if mask is not None and usemask == True:                    
+                            imm = Image.composite(thisbackimage,whiteimage,maskimage)
+                            backimg.paste(imm,target,maskimage)                        
+                            imm = None                
+                        else:
+                            backimg.paste(thisbackimage,target)
+
+                    if borders == True:
+                        drawback = ImageDraw.Draw(backimg)
+                        drawback.rectangle(bdr,outline=(128,128,127),width=2)
 
                     thisbackimage = None
+                    
+                if targetb is not None:
+                    thisbackimage = backimage
+                    if images[imageindex] in cardbacks:
+                        #print("Using Special Back Image " + cardbacks[images[imageindex]])
+                        thisbackimage = Image.open(cardbacks[images[imageindex]])
+                        
+                    if thisbackimage is None:
+                        thisbackimage = imx
+                        
+                    if mask is not None and usemask == True:                    
+                        imm = Image.composite(thisbackimage,whiteimage,maskimage)
+                        img.paste(imm,targetb,maskimage)
+                        imm = None                
+                    else:
+                        img.paste(thisbackimage,targetb)
 
                 #Add to SVG cut template
                 if svgcontent != '':
@@ -357,20 +527,21 @@ for folder in dirs:
             GenerateCutLines(img,srcsize[0],srcsize[1],offsetx,offsety,fitx,fity,pw,ph)
 
         #Saving Image File
-        img.save(folder + '_front_' + str(imageno) + ".png")
-        print("Generated File " + folder + '_front_' + str(imageno) + ".png")        
+        img.save(outputfolder + '_front_' + str(imageno) + ".png")
+        #print("Generated File " + folder + '_front_' + str(imageno) + ".png")        
 
         if genbacks == True:
             #Save backing file
             if cutlines == True:
                 GenerateCutLines(backimg,srcsize[0],srcsize[1],offsetx,offsety,fitx,fity,pw,ph)            
-            backimg.save(folder + '_back_' + str(imageno) + ".png")
+            backimg.save(outputfolder + '_back_' + str(imageno) + ".png")
 
         #Saving SVG file
         svg = svg + "</svg>"
-        svfile = open(folder + '_cut_' + str(imageno) + ".svg","w")
-        svfile.write(svg)
-        svfile.close()
+        if svgcontent != '':
+            svfile = open(outputfolder + '_cut_' + str(imageno) + ".svg","w")
+            svfile.write(svg)
+            svfile.close()
 
         #Clearing images
         imageno = imageno + 1        
