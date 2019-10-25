@@ -6,6 +6,7 @@ import pathlib
 import configparser
 import argparse
 import xmltodict
+import math
 
 def GenerateCutLines(img,wx,wy,ox,oy,nx,ny,sx,sy):
     draw = ImageDraw.Draw(img)
@@ -36,11 +37,19 @@ def Extract(origin, destination,extractor):
                 backing.append(len(capture)-1)
 
     print("Found " + str(len(capture)) + " capture points in extractor SVG")
-            
-    #Create destination image...
-    backsequence = []
-    for n in backsequence:
-        backsequence.append(n)    
+
+    backsequence = None
+    backextract = extractor.replace(".svg","[back].svg")
+    print("Checking For " + backextract)
+    if os.path.exists(backextract):
+        #The backing has an alternative distribution
+        with open(backextract) as fd:
+            print("Found alternative capture points for card back")
+            backsequence = []
+            doc = xmltodict.parse(fd.read())            
+
+            for rct in doc['svg']['rect']:            
+                backsequence.append((int(float(rct['@x'])),int(float(rct['@y'])),int(float(rct['@width'])),int(float(rct['@height']))))                
 
     #For every source image...
     imageno = 0
@@ -60,9 +69,8 @@ def Extract(origin, destination,extractor):
             ps = file.find('[back]')
             if ps > 0:                
                 mod = "[back]"
-                sequence = backsequence
-
-            #print(str(backsequence))
+                if backsequence is not None:
+                    sequence = backsequence
 
             capno = 0
             for cap in sequence:
@@ -132,9 +140,10 @@ bleed = 0
 
 
 #Import arguments
-parser = argparse.ArgumentParser(description='Prepares Print-At-Home Card Games for Printing')
+parser = argparse.ArgumentParser(description='Prepares Print-At-Home Card Games for Printing',fromfile_prefix_chars="@")
 parser.add_argument('name', default="*", help='The name of the card to process')
-parser.add_argument('--backs',const=True, default=False, action='store_const', help='Produce card backs as well as fronts')
+parser.add_argument('--backs',const=True, default=False, action='store_const', help='Produce card backs, even if no back information exists.')
+parser.add_argument('--nobacks',const=True, default=False, action='store_const', help='Do not produce backs, even if there is back artwork available')
 parser.add_argument('--nooverlap',const=False, default=True, action='store_const', help='Do not overlap cards, leaving unfilled space')
 parser.add_argument('--cutlines',const=True, default=False, action='store_const', help='Draw cut lines onto the finished images')
 parser.add_argument('--topedge',const=True, default=False, action='store_const', help='Place images at the top of the paper instead of the center')
@@ -148,16 +157,24 @@ parser.add_argument('--paperwidth',default='', nargs='?')
 parser.add_argument('--paperheight',default='', nargs='?')
 parser.add_argument('--units',default='in', nargs='?')
 parser.add_argument('--dpi',default='300', nargs='?')
-parser.add_argument('--bleed',default='0', nargs='?')
+parser.add_argument('--margin',default='0', nargs='?')
 parser.add_argument('--landscape',const=True, default=False, action='store_const', help='Flip the named paper sizes 90 degrees')
 parser.add_argument('--flipbacksx',const=True, default=False, action='store_const', help='Produce cards with backs on their longest axis')
 parser.add_argument('--flipbacksy',const=True, default=False, action='store_const', help='Produce cards with backs on their shortest axis')
+parser.add_argument('--flipmirror',const=False, default=True, action='store_const', help='Mirror the image when flipping')
+parser.add_argument('--flipalt',const=True, default=False, action='store_const', help='Change the order of drawing cards with backs on the same image')
+parser.add_argument('--backhreflect',const=True, default=False, action='store_const', help='Reflect the image on the back of the card (horizontally)')
+parser.add_argument('--backvreflect',const=True, default=False, action='store_const', help='Reflect the image on the back of the card (vertically)')
+parser.add_argument('--resize',default="no", help='Resize the card to fit onto the output paper')
+parser.add_argument('--rotatecw',const=True, default=False, action='store_const', help='Rotate the final image clockwise 90 degrees')
+parser.add_argument('--rotateacw',const=True, default=False, action='store_const', help='Rotate the final image anti-clockwise 90 degrees')
 args = parser.parse_args()
 
-genbacks = args.backs
+
+
+#genbacks = args.backs
 cutlines = args.cutlines
 overlap = args.nooverlap
-#fittoedge = args.onedge
 usemask = args.nomask
 borders = args.borders
 
@@ -211,7 +228,7 @@ if args.units != '':
         unitmult = 2.54
 
     if args.units == 'px':
-        unitmult = float(args.dpi)
+        unitmult = 1/float(args.dpi)
 
     if args.paperwidth != '':
         paperwidthin = int(int(args.paperwidth) * unitmult)
@@ -220,11 +237,15 @@ if args.units != '':
 #Output quality
 dpi = int(args.dpi)
 
-bleed = int(args.bleed)
+bleed = int(args.margin)
 
 #Final resolution
 pw = int(dpi * paperwidthin)
 ph = int(dpi * paperheightin)
+
+if args.units == 'px':
+    pw = int(args.paperwidth)
+    ph = int(args.paperheight)
 
 #Create a list of folders in this directory
 dirs = os.listdir(cpath)
@@ -257,6 +278,7 @@ for folder in dirs:
         if args.skipextract == False:
             Extract(oldfolder,folder,extfile)
             extracting = True
+        print("Card Extraction Complete!")
     
     #Grab a list of files in the active directory    
     allfiles = glob.glob(cpath + os.sep + folder + os.sep + "*.*")
@@ -269,11 +291,13 @@ for folder in dirs:
                 continue
 
             if file.lower().find("back" + extension) >= 0:
+                genbacks = True
                 back=file
                 continue
 
             ps = file.find('[back]')
-            if ps > 0:                
+            if ps > 0:
+                genbacks = True
                 cardbacks[file.replace('[back]','')] = file
                 continue
             
@@ -281,7 +305,14 @@ for folder in dirs:
 
     #Skip if there were no images
     if len(images) == 0:
-        continue    
+        continue
+
+    #If they've demanded no backs, don't draw them.
+    if args.nobacks == True:
+        genbacks = False
+
+    if args.backs == True:
+        genbacks = True
 
     #Take a look at the size of the images...
     sample = images[0]
@@ -329,15 +360,16 @@ for folder in dirs:
                         images.append(cd)
             except:
                 pass            
+
+    print("Fitting Cards to " + str(pw) + ", " + str(ph) + " paper")
         
     #Figure out the ideal fit...
-
     ppw = pw
     pph = ph
 
     ppw -= bleed*2
     pph -= bleed*2
-
+    
     if args.flipbacksx == True:        
         srcsize = (int(srcsize[0] * 2),srcsize[1])
         
@@ -362,17 +394,30 @@ for folder in dirs:
     flipped = False
 
     #Switch to horizontal if required
-    if hfit > vfit:        
-        sz = pw
-        pw = ph
-        ph = sz
-        fit = hfit
-        fitx = hfity
-        fity = hfitx
-        flipped = True
+    if args.resize == "no":
+        if hfit > vfit:        
+            sz = pw
+            pw = ph
+            ph = sz
+            fit = hfit
+            fitx = hfity
+            fity = hfitx
+            sz = ppw
+            ppw = pph
+            pph = sz
+            flipped = True
+
+    #Do I need to resize the incoming images?
+    if args.resize != "no":
+        fit = 1
+        fitx = 1
+        fity = 1
+
+        print("Adjusting Source Size to Fit To Page")
+        srcsize = (ppw,pph)
 
     #Show final paper fit details...
-    print(folder + " can fit " + str(fit) + " items on a " + str(pw) + "x" + str(ph) + " canvas.")
+    print(folder + " can fit " + str(fit) + " items ( " + str(fitx) + "x" + str(fity) + " ) on a " + str(pw) + "x" + str(ph) + " canvas.")
     if fit == 0:
         print("Unable to process - item does not fit on the selected paper size.")
         continue
@@ -384,24 +429,22 @@ for folder in dirs:
     offsetx = 0
     #Center on X axis...
     if args.leftedge == False:
-        offsetx = (pw - printwidth)/ 2
+        offsetx = int((ppw - printwidth)/ 2)
 
     offsety = 0
     #Center on Y axis...
     if args.topedge == False:
-        offsety = (ph - printheight)/ 2
+        offsety = int((pph - printheight)/ 2)
 
     offsetx += bleed
-    offsety += bleed
+    offsety += bleed    
 
     #Prepare masking images
     whiteimage = Image.new('RGBA',(im.size[0],im.size[1]),(255, 255, 255, 255))
     if mask is not None:
         maskimage = Image.open(mask).convert(mode='L')
-
-    #If no back image was found, don't generate backs.
-    if back is None:
-        args.genbacks = False
+        if args.resize != "no":
+            maskimage.resize((ppw,pph),Image.BICUBIC)
 
     #Generate fronts for all of the cards...
     imageno = 1
@@ -422,24 +465,45 @@ for folder in dirs:
     #These cards shouldn't touch one-another - spread them out a bit.
     gapx = 0
     gapy = 0
-    if distribute == True:
-        gapx = (offsetx * 0.8) / (fitx-1)
-        offsetx = offsetx * 0.2
+    if args.distribute == True:
+        print("Calculating Distribution...")
+
+        thispage = len(images) - imageno
+        pwidth = printwidth
+        pheight = printheight
+
+        if thispage < fity:
+            pheight = thispage * srcsize[1]
+        if thispage < fit:
+            pwidth = srcsize[0] * int(math.floor(thispage / fity)+1)
         
-        gapy = (offsety * 0.8) / (fity-1)
-        offsety = offsety * 0.2    
+        gapx = int((pw - pwidth) / (fitx))
+        offsetx = int(bleed + (gapx / 2))
+        
+        gapy = int((ph - pheight) / (fity))
+        offsety = int(bleed + (gapy / 2))
+
+        print("Page = " + str(pw) + ", " + str(ph))
+        print("Paper = " + str(printwidth) + ", " + str(printheight))
+        print("Gap = " + str(gapx) + ", " + str(gapy))
+        print("Offset = " + str(offsetx) + ", " + str(offsety))
 
     #Prepare SVG file..
     svg = '<?xml version="1.0" encoding="utf-8"?>' + "\r\n"
     svg = svg + '<svg version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"' + "\r\n"
     svg = svg + '   viewBox="0 0 ' + str(pw) + ' ' + str(ph) + '" enable-background="new 0 0 ' + str(pw) + ' ' + str(ph) + '" xml:space="preserve">' + "\r\n"
 
+    #Grap SVG cut template
     svgcontent = ""
     svgfilename = cpath + os.sep + folder + os.sep + "mask.svg"
     if os.path.exists(svgfilename):
         fl = open(svgfilename,"r")
         svgcontent = fl.read()
         fl.close()
+    else:
+        if args.distribute == True:
+            #If we are distributing, we can prooduce cut SVGs.
+            svgcontent = "<rect x=\"0\" y=\"0\" width=\"" + str(srcsize[0]) + "\" height=\"" + str(srcsize[1]) + "\" fill=\"black\"/>"
 
     #Start generating images
     while imageindex <= len(images)-1:        
@@ -447,23 +511,42 @@ for folder in dirs:
             for y in range(0,fity):                
                 if imageindex >= len(images):
                     break
-                                
+
+                #Open the image
                 imx = Image.open(images[imageindex])
+                if args.resize != "no":                    
+                    imx = imx.resize((ppw,pph),Image.BICUBIC)
+
+                #Determine draw location
                 target = (int(offsetx + (x*srcsize[0])) + (gapx * x) - oll,int(offsety + (y*srcsize[1])) + (gapy * y) - olt)
                 targetb = None
+
+                #Resized cards should be drawn from top-left
+                if args.resize != "no":
+                    target = (bleed,bleed)
+
+                #If drawings fronts AND backs, halve the axis (since we doubled it earlier)
                 if args.flipbacksx:
                     targetb = (target[0] + int(srcsize[0]/2),target[1])
                 if args.flipbacksy:
                     targetb = (target[0],target[1] + int(srcsize[1] / 2))
 
-                #If we are using the mask, mask the image here.
-                if mask is not None and usemask == True:                    
+                if args.flipalt == True:
+                    tg = target
+                    target = targetb
+                    targetb = tg
+
+                #Draw the image
+                if mask is not None and usemask == True:
+                    #With a mask
                     imm = Image.composite(imx,whiteimage,maskimage)
                     img.paste(imm,target,maskimage)
                     imm = None                
                 else:
+                    #Wihout a mask
                     img.paste(imx,target)
 
+                #Calculate the border
                 bdr = [int(offsetx + (x*srcsize[0])) + (gapx * x) - oll,int(offsety + (y*srcsize[1])) + (gapy * y) - olt,srcsize[0],srcsize[1]]
 
                 if borders == True:
@@ -473,43 +556,73 @@ for folder in dirs:
 
                 if genbacks == True:
                     #If generating card backs, add the back image here too.
+
+                    #We need to flip the Y axis for backs
+                    if args.distribute == True:
+                        #For some reason, the distributed version needs an extra fudge along the x-offset
+                        mtarget = (backimg.size[0] - (int(offsetx + ((x+1)*srcsize[0])) + (gapx * (x+1)) - oll) + (offsetx*2),int(offsety + (y*srcsize[1])) + (gapy * y) - olt)
+                    else:
+                        mtarget = (backimg.size[0] - (int(offsetx + ((x+1)*srcsize[0])) + (gapx * (x+1)) - oll),int(offsety + (y*srcsize[1])) + (gapy * y) - olt)                    
+                    
                     thisbackimage = backimage
-                    if images[imageindex] in cardbacks:
-                        #print("Using Special Back Image " + cardbacks[images[imageindex]])
+                    #Check if there is a specific back for this card
+                    if images[imageindex] in cardbacks:                        
                         thisbackimage = Image.open(cardbacks[images[imageindex]])
 
+                    #Resized cards should be drawn from top-left
+                    if thisbackimage is not None and args.resize != "no":                        
+                        thisbackimage = thisbackimage.resize((ppw,pph),Image.BICUBIC)
+                        mtarget = (bleed,bleed)
+
+                    #If no back is available, use the original image.
                     if thisbackimage is None:
                         thisbackimage = imx
 
-                    if thisbackimage is not None:
-                        
-                        if mask is not None and usemask == True:                    
+                    if args.backhreflect == True:
+                        thisbackimage = thisbackimage.transpose(Image.FLIP_LEFT_RIGHT)
+                    if args.backvreflect == True:
+                        thisbackimage = thisbackimage.transpose(Image.FLIP_TOP_BOTTOM)
+
+                    if thisbackimage is not None:                        
+                        if mask is not None and usemask == True:
+                            #Draw with masking
                             imm = Image.composite(thisbackimage,whiteimage,maskimage)
-                            backimg.paste(imm,target,maskimage)                        
+                            backimg.paste(imm,mtarget,maskimage)                        
                             imm = None                
                         else:
-                            backimg.paste(thisbackimage,target)
+                            #Draw without masking
+                            backimg.paste(thisbackimage,mtarget)
 
                     if borders == True:
                         drawback = ImageDraw.Draw(backimg)
                         drawback.rectangle(bdr,outline=(128,128,127),width=2)
 
                     thisbackimage = None
-                    
+
+                #This is for drawing backs on the SAME PAGE as fronts
                 if targetb is not None:
                     thisbackimage = backimage
-                    if images[imageindex] in cardbacks:
-                        #print("Using Special Back Image " + cardbacks[images[imageindex]])
+
+                    #Check if there is a specific back for this card.
+                    if images[imageindex] in cardbacks:                        
                         thisbackimage = Image.open(cardbacks[images[imageindex]])
-                        
+
+                    #If no back is available, use the original image.
                     if thisbackimage is None:
                         thisbackimage = imx
-                        
-                    if mask is not None and usemask == True:                    
+                        if args.flipmirror == True:
+                            if args.flipbacksx == True:
+                                thisbackimage = imx.transpose(Image.FLIP_LEFT_RIGHT)
+                            if args.flipbacksy == True:
+                                thisbackimage = imx.transpose(Image.FLIP_TOP_BOTTOM)
+                                                
+                    if mask is not None and usemask == True:
+                        #Draw with masking
                         imm = Image.composite(thisbackimage,whiteimage,maskimage)
                         img.paste(imm,targetb,maskimage)
                         imm = None                
                     else:
+                        #Draw without masking
                         img.paste(thisbackimage,targetb)
 
                 #Add to SVG cut template
@@ -528,7 +641,6 @@ for folder in dirs:
 
         #Saving Image File
         img.save(outputfolder + '_front_' + str(imageno) + ".png")
-        #print("Generated File " + folder + '_front_' + str(imageno) + ".png")        
 
         if genbacks == True:
             #Save backing file
@@ -543,7 +655,7 @@ for folder in dirs:
             svfile.write(svg)
             svfile.close()
 
-        #Clearing images
+        #Clearing images & Resetting for Next Pass
         imageno = imageno + 1        
         img = None
         img = Image.new('RGBA',(pw,ph),color=(255, 255, 255, 255))
